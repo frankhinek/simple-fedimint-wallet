@@ -1,11 +1,11 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use anyhow::{Context, Result};
-use fedimint_client::{ClientHandleArc, OperationId};
+use anyhow::Context;
+use fedimint_client::{Client, ClientHandleArc, ClientModuleInstance, OperationId};
 use fedimint_core::Amount;
 use fedimint_core::invite_code::InviteCode;
-use fedimint_ln_client::LnReceiveState;
+use fedimint_ln_client::{LightningClientModule, LnReceiveState};
 use fedimint_ln_common::lightning_invoice::{Bolt11Invoice, Description};
 use futures::StreamExt;
 use serde::Serialize;
@@ -33,6 +33,18 @@ pub struct InvoiceInfo {
     pub invoice: String,
 }
 
+/// Helper functions for fedimint_client::Client
+pub trait ClientExt {
+    /// Attempt to get the first lightning client module instance.
+    fn lightning(&self) -> anyhow::Result<ClientModuleInstance<LightningClientModule>>;
+}
+
+impl ClientExt for Client {
+    fn lightning(&self) -> anyhow::Result<ClientModuleInstance<LightningClientModule>> {
+        self.get_first_module::<LightningClientModule>()
+    }
+}
+
 pub type OutgoingPaymentInfo = fedimint_ln_client::OutgoingLightningPayment;
 
 pub struct FedimintWallet {
@@ -41,16 +53,14 @@ pub struct FedimintWallet {
 
 impl FedimintWallet {
     /// Create a new wallet instance or recover an existing one
-    pub async fn new(invite_code: InviteCode, data_dir: PathBuf) -> Result<Self> {
+    pub async fn new(invite_code: InviteCode, data_dir: PathBuf) -> anyhow::Result<Self> {
         let (client, _) = build_client(Some(invite_code.clone()), Some(&data_dir)).await?;
 
-        Ok(Self {
-            client,
-        })
+        Ok(Self { client })
     }
 
     /// Get the current balance in millisatoshis
-    pub async fn get_balance(&self) -> Result<Amount> {
+    pub async fn get_balance(&self) -> anyhow::Result<Amount> {
         Ok(self.client.get_balance().await)
     }
 
@@ -59,7 +69,7 @@ impl FedimintWallet {
         &self,
         amount_msat: u64,
         description: String,
-    ) -> Result<InvoiceInfo, WalletError> {
+    ) -> anyhow::Result<InvoiceInfo, WalletError> {
         if amount_msat == 0 {
             return Err(WalletError::InvoiceAmountZero);
         }
@@ -68,20 +78,17 @@ impl FedimintWallet {
         let desc = Description::new(description)
             .map_err(|e| WalletError::Other(anyhow::anyhow!("Invalid description: {}", e)))?;
 
-        let lightning = self
-            .client
-            .get_first_module::<fedimint_ln_client::LightningClientModule>()
-            .context("Lightning module not found")?;
-
         // Update gateway cache and find best gateway
-        lightning.update_gateway_cache().await?;
-        let gateways = lightning.list_gateways().await;
+        self.client.lightning()?.update_gateway_cache().await?;
+        let gateways = self.client.lightning()?.list_gateways().await;
         let gateway = gateways
             .into_iter()
             .max_by_key(|g| g.ttl)
             .context("No gateways found")?;
 
-        let (operation_id, invoice, _) = lightning
+        let (operation_id, invoice, _) = self
+            .client
+            .lightning()?
             .create_bolt11_invoice(
                 amount,
                 fedimint_ln_common::lightning_invoice::Bolt11InvoiceDescription::Direct(&desc),
@@ -100,12 +107,10 @@ impl FedimintWallet {
     }
 
     /// Pay a Lightning invoice
-    pub async fn pay_invoice(&self, invoice: Bolt11Invoice) -> Result<OutgoingPaymentInfo, WalletError> {
-        let lightning = self
-            .client
-            .get_first_module::<fedimint_ln_client::LightningClientModule>()
-            .context("Lightning module not found")?;
-
+    pub async fn pay_invoice(
+        &self,
+        invoice: Bolt11Invoice,
+    ) -> anyhow::Result<OutgoingPaymentInfo, WalletError> {
         // Check balance if invoice has amount
         if let Some(amount_msat) = invoice.amount_milli_satoshis() {
             if amount_msat == 0 {
@@ -119,7 +124,11 @@ impl FedimintWallet {
         }
 
         info!("Paying invoice: {}", invoice);
-        let payment = lightning.pay_bolt11_invoice(None, invoice, ()).await?;
+        let payment = self
+            .client
+            .lightning()?
+            .pay_bolt11_invoice(None, invoice, ())
+            .await?;
 
         Ok(payment)
     }
@@ -128,18 +137,17 @@ impl FedimintWallet {
     pub async fn await_invoice_payment(
         &self,
         operation_id: OperationId,
-    ) -> Result<(), WalletError> {
-        let lightning = self
-            .client
-            .get_first_module::<fedimint_ln_client::LightningClientModule>()
-            .context("Lightning module not found")?;
-        
+    ) -> anyhow::Result<(), WalletError> {
         let operation_exists = self.client.operation_exists(operation_id).await;
         if !operation_exists {
-            return Err(WalletError::Other(anyhow::anyhow!("Operation does not exist")));
+            return Err(WalletError::Other(anyhow::anyhow!(
+                "Operation does not exist"
+            )));
         }
 
-        let mut updates = lightning
+        let mut updates = self
+            .client
+            .lightning()?
             .subscribe_ln_receive(operation_id)
             .await
             .context("Failed to subscribe to invoice updates")?
@@ -161,7 +169,10 @@ impl FedimintWallet {
             }
         }
 
-        Err(WalletError::Other(anyhow::anyhow!("No updates received for invoice with operation id: {}", operation_id.fmt_full())))
+        Err(WalletError::Other(anyhow::anyhow!(
+            "No updates received for invoice with operation id: {}",
+            operation_id.fmt_full()
+        )))
     }
 }
 
@@ -169,11 +180,13 @@ impl FedimintWallet {
 async fn build_client(
     invite_code: Option<InviteCode>,
     data_dir: Option<&PathBuf>,
-) -> Result<(ClientHandleArc, Option<InviteCode>)> {
-    use fedimint_client::Client;
+) -> anyhow::Result<(ClientHandleArc, Option<InviteCode>)> {
     use fedimint_client::secret::{PlainRootSecretStrategy, RootSecretStrategy};
     use fedimint_core::db::Database;
     use fedimint_core::module::registry::ModuleRegistry;
+    use fedimint_ln_client::LightningClientInit;
+    use fedimint_mint_client::MintClientInit;
+    use fedimint_wallet_client::WalletClientInit;
 
     let db = if let Some(data_dir) = data_dir {
         Database::new(
@@ -185,9 +198,9 @@ async fn build_client(
     };
 
     let mut client_builder = Client::builder(db).await?;
-    client_builder.with_module(fedimint_mint_client::MintClientInit);
-    client_builder.with_module(fedimint_ln_client::LightningClientInit::default());
-    client_builder.with_module(fedimint_wallet_client::WalletClientInit::default());
+    client_builder.with_module(MintClientInit);
+    client_builder.with_module(LightningClientInit::default());
+    client_builder.with_module(WalletClientInit::default());
     client_builder.with_primary_module_kind(fedimint_mint_client::KIND);
 
     let client_secret =
