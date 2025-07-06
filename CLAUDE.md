@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a minimal Fedimint wallet implementation in Rust that provides basic Lightning payment functionality. The wallet connects to a Fedimint federation and allows users to:
+This is an interactive Fedimint wallet implementation in Rust that provides basic Lightning payment functionality. The wallet runs as a persistent interactive application, allowing operations to complete properly. It connects to a Fedimint federation and allows users to:
 - Check balances
 - Create Lightning invoices
 - Pay Lightning invoices
@@ -33,29 +33,30 @@ cargo fmt
 cargo clippy
 ```
 
-### Wallet Commands
+### Running the Wallet
 ```bash
-# Set federation invite code
+# Set federation invite code (for fish shell, use set -x)
 export FEDIMINT_INVITE_CODE="fed1..."
 
-# Check balance
-cargo run -- balance
+# Run the interactive wallet
+cargo run
 
-# Create invoice (amount in millisatoshis)
-cargo run -- invoice --amount 10000 --description "Payment"
-
-# Pay invoice
-cargo run -- pay "lnbc..."
-
-# Check payment status
-cargo run -- await-payment <operation-id>
+# Or provide invite code as argument
+cargo run -- --invite-code "fed1..."
 ```
+
+### Interactive Menu Options
+1. **Get Wallet Balance** - Display current balance in millisatoshis and sats
+2. **Create a Lightning Invoice** - Generate a new invoice with specified amount and description
+3. **Pay a Lightning Invoice** - Pay a provided Lightning invoice
+4. **Await Invoice Payment** - Monitor an invoice payment status using operation ID
+5. **Exit** - Close the wallet application
 
 ## Architecture
 
 ### Core Components
 
-1. **main.rs**: CLI interface using clap, handles command parsing and orchestrates wallet operations
+1. **main.rs**: Interactive CLI interface using clap for initial configuration, provides menu-driven wallet operations
 2. **wallet.rs**: Core wallet implementation that:
    - Manages Fedimint client initialization and recovery
    - Handles Lightning invoice creation/payment through the Lightning module

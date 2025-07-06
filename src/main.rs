@@ -1,8 +1,9 @@
+use std::io::{self, Write};
 use std::path::PathBuf;
 use std::str::FromStr;
 
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use clap::Parser;
 use fedimint_core::invite_code::InviteCode;
 use fedimint_ln_common::lightning_invoice::Bolt11Invoice;
 use tracing_subscriber::EnvFilter;
@@ -12,47 +13,34 @@ use wallet::FedimintWallet;
 
 #[derive(Parser)]
 #[command(name = "simple-fedimint-wallet")]
-#[command(about = "A minimal Fedimint wallet implementation", long_about = None)]
+#[command(about = "An interactive Fedimint wallet", long_about = None)]
 struct Cli {
-    /// Federation invite code
+    /// Federation invite code (can be provided via FEDIMINT_INVITE_CODE env var)
     #[arg(short, long, env = "FEDIMINT_INVITE_CODE")]
     invite_code: String,
 
     /// Data directory for wallet storage
     #[arg(short, long, default_value = "./wallet-data")]
     data_dir: PathBuf,
-
-    #[command(subcommand)]
-    command: Commands,
 }
 
-#[derive(Subcommand)]
-enum Commands {
-    /// Show wallet balance
-    Balance,
+fn print_menu() {
+    println!("\n\nSimple Fedimint Wallet");
+    println!("=====================\n");
+    println!("1. Get Wallet Balance");
+    println!("2. Create a Lightning Invoice");
+    println!("3. Pay a Lightning Invoice");
+    println!("4. Await Invoice Payment");
+    println!("5. Exit");
+    println!("\nSelect an option: ");
+}
 
-    /// Create a Lightning invoice
-    Invoice {
-        /// Amount in millisatoshis
-        #[arg(short, long)]
-        amount: u64,
-
-        /// Invoice description
-        #[arg(short, long, default_value = "Fedimint wallet payment")]
-        description: String,
-    },
-
-    /// Pay a Lightning invoice
-    Pay {
-        /// Lightning invoice to pay
-        invoice: String,
-    },
-
-    /// Wait for an invoice to be paid
-    AwaitPayment {
-        /// Operation ID from invoice creation
-        operation_id: String,
-    },
+fn get_user_input(prompt: &str) -> String {
+    print!("{}", prompt);
+    io::stdout().flush().unwrap();
+    let mut input = String::new();
+    io::stdin().read_line(&mut input).unwrap();
+    input.trim().to_string()
 }
 
 #[tokio::main]
@@ -70,45 +58,88 @@ async fn main() -> Result<()> {
     let invite_code = InviteCode::from_str(&cli.invite_code)?;
 
     // Create or recover wallet
+    println!("Initializing wallet...");
     let wallet = FedimintWallet::new(invite_code, cli.data_dir).await?;
+    println!("Wallet initialized successfully!\n");
 
-    match cli.command {
-        Commands::Balance => {
-            let balance = wallet.get_balance().await?;
-            println!(
-                "Balance: {} millisatoshis ({} sats)",
-                balance.msats,
-                balance.msats / 1000
-            );
-        }
+    loop {
+        print_menu();
+        let choice = get_user_input("");
 
-        Commands::Invoice {
-            amount,
-            description,
-        } => {
-            let invoice_info = wallet.create_invoice(amount, description).await?;
-            println!("Invoice created!");
-            println!("Lightning invoice: {}", invoice_info.invoice);
-            println!("Operation ID: {}", invoice_info.operation_id.fmt_full());
-            println!(
-                "\nShare the invoice for payment. Use 'await-payment' command with the operation ID to check payment status."
-            );
-        }
-
-        Commands::Pay { invoice } => {
-            let invoice = Bolt11Invoice::from_str(&invoice)?;
-            let payment_info = wallet.pay_invoice(invoice).await?;
-            println!("Payment initiated!");
-            println!("Contract ID: {}", payment_info.contract_id);
-            println!("Fee: {} msats", payment_info.fee.msats);
-            println!("Payment type: {:?}", payment_info.payment_type);
-        }
-
-        Commands::AwaitPayment { operation_id } => {
-            let op_id = operation_id.parse()?;
-            println!("Waiting for payment...");
-            wallet.await_invoice_payment(op_id).await?;
-            println!("Invoice has been paid!");
+        match choice.as_str() {
+            "1" => {
+                match wallet.get_balance().await {
+                    Ok(balance) => {
+                        println!(
+                            "\nBalance: {} millisatoshis ({} sats)",
+                            balance.msats,
+                            balance.msats / 1000
+                        );
+                    }
+                    Err(e) => println!("\nError getting balance: {}", e),
+                }
+            }
+            "2" => {
+                let amount_str = get_user_input("\nEnter amount in millisatoshis: ");
+                match amount_str.parse::<u64>() {
+                    Ok(amount) => {
+                        let description = get_user_input("Enter invoice description (or press Enter for default): ");
+                        let description = if description.is_empty() {
+                            "Fedimint wallet payment".to_string()
+                        } else {
+                            description
+                        };
+                        
+                        match wallet.create_invoice(amount, description).await {
+                            Ok(invoice_info) => {
+                                println!("\nInvoice created!");
+                                println!("Lightning invoice: {}", invoice_info.invoice);
+                                println!("Operation ID: {}", invoice_info.operation_id.fmt_full());
+                                println!("\nShare the invoice for payment. Use option 4 with the operation ID to check payment status.");
+                            }
+                            Err(e) => println!("\nError creating invoice: {}", e),
+                        }
+                    }
+                    Err(_) => println!("\nInvalid amount. Please enter a number."),
+                }
+            }
+            "3" => {
+                let invoice_str = get_user_input("\nEnter Lightning invoice: ");
+                match Bolt11Invoice::from_str(&invoice_str) {
+                    Ok(invoice) => {
+                        match wallet.pay_invoice(invoice).await {
+                            Ok(payment_info) => {
+                                println!("\nPayment initiated!");
+                                println!("Contract ID: {}", payment_info.contract_id);
+                                println!("Fee: {} msats", payment_info.fee.msats);
+                                println!("Payment type: {:?}", payment_info.payment_type);
+                            }
+                            Err(e) => println!("\nError paying invoice: {}", e),
+                        }
+                    }
+                    Err(e) => println!("\nInvalid invoice: {}", e),
+                }
+            }
+            "4" => {
+                let operation_id = get_user_input("\nEnter operation ID: ");
+                match operation_id.parse() {
+                    Ok(op_id) => {
+                        println!("\nWaiting for payment...");
+                        match wallet.await_invoice_payment(op_id).await {
+                            Ok(_) => println!("Invoice has been paid!"),
+                            Err(e) => println!("Error awaiting payment: {}", e),
+                        }
+                    }
+                    Err(e) => println!("\nInvalid operation ID: {}", e),
+                }
+            }
+            "5" => {
+                println!("\nExiting wallet...");
+                break;
+            }
+            _ => {
+                println!("\nInvalid option. Please select 1-5.");
+            }
         }
     }
 
