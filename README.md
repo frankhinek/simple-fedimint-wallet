@@ -10,10 +10,12 @@ as a persistent application with a menu-driven interface.
 - Create Lightning invoices
 - Pay Lightning invoices
 - Monitor invoice payment status
+- List available federation gateways
 
 ## Prerequisites
 
-- A Fedimint federation invite code
+- A running Fedimint federation to connect to
+- A valid federation invite code
 
 ## Installation
 
@@ -61,7 +63,8 @@ Simple Fedimint Wallet
 2. Create a Lightning Invoice
 3. Pay a Lightning Invoice
 4. Await Invoice Payment
-5. Exit
+5. List Federation Gateways
+6. Exit
 
 Select an option:
 ```
@@ -83,7 +86,11 @@ Select an option:
    - Enter the operation ID from invoice creation
    - The wallet will wait for the invoice to be paid
 
-5. **Exit**: Safely close the wallet application
+5. **List Federation Gateways**:
+   - Shows all available Lightning gateways in the federation
+   - Displays gateway IDs, routing info, and capabilities
+
+6. **Exit**: Safely close the wallet application
 
 ### Data Storage
 

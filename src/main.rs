@@ -31,7 +31,8 @@ fn print_menu() {
     println!("2. Create a Lightning Invoice");
     println!("3. Pay a Lightning Invoice");
     println!("4. Await Invoice Payment");
-    println!("5. Exit");
+    println!("5. List Federation Gateways");
+    println!("6. Exit");
     println!("\nSelect an option: ");
 }
 
@@ -67,35 +68,37 @@ async fn main() -> Result<()> {
         let choice = get_user_input("");
 
         match choice.as_str() {
-            "1" => {
-                match wallet.get_balance().await {
-                    Ok(balance) => {
-                        println!(
-                            "\nBalance: {} millisatoshis ({} sats)",
-                            balance.msats,
-                            balance.msats / 1000
-                        );
-                    }
-                    Err(e) => println!("\nError getting balance: {}", e),
+            "1" => match wallet.get_balance().await {
+                Ok(balance) => {
+                    println!(
+                        "\nBalance: {} millisatoshis ({} sats)",
+                        balance.msats,
+                        balance.msats / 1000
+                    );
                 }
-            }
+                Err(e) => println!("\nError getting balance: {}", e),
+            },
             "2" => {
                 let amount_str = get_user_input("\nEnter amount in millisatoshis: ");
                 match amount_str.parse::<u64>() {
                     Ok(amount) => {
-                        let description = get_user_input("Enter invoice description (or press Enter for default): ");
+                        let description = get_user_input(
+                            "Enter invoice description (or press Enter for default): ",
+                        );
                         let description = if description.is_empty() {
                             "Fedimint wallet payment".to_string()
                         } else {
                             description
                         };
-                        
+
                         match wallet.create_invoice(amount, description).await {
                             Ok(invoice_info) => {
                                 println!("\nInvoice created!");
                                 println!("Lightning invoice: {}", invoice_info.invoice);
                                 println!("Operation ID: {}", invoice_info.operation_id.fmt_full());
-                                println!("\nShare the invoice for payment. Use option 4 with the operation ID to check payment status.");
+                                println!(
+                                    "\nShare the invoice for payment. Use option 4 with the operation ID to check payment status."
+                                );
                             }
                             Err(e) => println!("\nError creating invoice: {}", e),
                         }
@@ -106,17 +109,15 @@ async fn main() -> Result<()> {
             "3" => {
                 let invoice_str = get_user_input("\nEnter Lightning invoice: ");
                 match Bolt11Invoice::from_str(&invoice_str) {
-                    Ok(invoice) => {
-                        match wallet.pay_invoice(invoice).await {
-                            Ok(payment_info) => {
-                                println!("\nPayment initiated!");
-                                println!("Contract ID: {}", payment_info.contract_id);
-                                println!("Fee: {} msats", payment_info.fee.msats);
-                                println!("Payment type: {:?}", payment_info.payment_type);
-                            }
-                            Err(e) => println!("\nError paying invoice: {}", e),
+                    Ok(invoice) => match wallet.pay_invoice(invoice).await {
+                        Ok(payment_info) => {
+                            println!("\nPayment initiated!");
+                            println!("Contract ID: {}", payment_info.contract_id);
+                            println!("Fee: {} msats", payment_info.fee.msats);
+                            println!("Payment type: {:?}", payment_info.payment_type);
                         }
-                    }
+                        Err(e) => println!("\nError paying invoice: {}", e),
+                    },
                     Err(e) => println!("\nInvalid invoice: {}", e),
                 }
             }
@@ -133,12 +134,35 @@ async fn main() -> Result<()> {
                     Err(e) => println!("\nInvalid operation ID: {}", e),
                 }
             }
-            "5" => {
+            "5" => match wallet.list_gateways().await {
+                Ok(gateways) => {
+                    if gateways.is_empty() {
+                        println!("\nNo gateways found in the federation.");
+                    } else {
+                        println!("\nFederation Gateways:");
+                        println!("===================");
+                        for gateway in gateways {
+                            println!("\nGateway ID: {}", gateway.gateway_id);
+                            println!("  Route hints: {} available", gateway.route_hints.len());
+                            println!("  Lightning alias: {}", gateway.lightning_alias);
+                            println!("  API endpoint: {}", gateway.api);
+                            println!("  Node public key: {}", gateway.node_pub_key);
+                            if gateway.supports_private_payments {
+                                println!("  Supports private payments: Yes");
+                            } else {
+                                println!("  Supports private payments: No");
+                            }
+                        }
+                    }
+                }
+                Err(e) => println!("\nError listing gateways: {}", e),
+            },
+            "6" => {
                 println!("\nExiting wallet...");
                 break;
             }
             _ => {
-                println!("\nInvalid option. Please select 1-5.");
+                println!("\nInvalid option. Please select 1-6.");
             }
         }
     }

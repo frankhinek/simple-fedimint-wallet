@@ -50,7 +50,8 @@ cargo run -- --invite-code "fed1..."
 2. **Create a Lightning Invoice** - Generate a new invoice with specified amount and description
 3. **Pay a Lightning Invoice** - Pay a provided Lightning invoice
 4. **Await Invoice Payment** - Monitor an invoice payment status using operation ID
-5. **Exit** - Close the wallet application
+5. **List Federation Gateways** - Display all available Lightning gateways with their capabilities
+6. **Exit** - Close the wallet application
 
 ## Architecture
 
@@ -62,6 +63,7 @@ cargo run -- --invite-code "fed1..."
    - Handles Lightning invoice creation/payment through the Lightning module
    - Manages gateway selection for invoice routing
    - Provides operation tracking for async payment flows
+   - Lists available federation gateways with their capabilities
 
 ### Key Dependencies
 

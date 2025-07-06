@@ -6,6 +6,7 @@ use fedimint_client::{Client, ClientHandleArc, ClientModuleInstance, OperationId
 use fedimint_core::Amount;
 use fedimint_core::invite_code::InviteCode;
 use fedimint_ln_client::{LightningClientModule, LnReceiveState};
+use fedimint_ln_common::LightningGateway;
 use fedimint_ln_common::lightning_invoice::{Bolt11Invoice, Description};
 use futures::StreamExt;
 use serde::Serialize;
@@ -173,6 +174,24 @@ impl FedimintWallet {
             "No updates received for invoice with operation id: {}",
             operation_id.fmt_full()
         )))
+    }
+
+    /// List all available gateways in the federation
+    pub async fn list_gateways(&self) -> anyhow::Result<Vec<LightningGateway>> {
+        // Update gateway cache first
+        self.client.lightning()?.update_gateway_cache().await?;
+
+        // Get all gateways
+        let gateways: Vec<LightningGateway> = self
+            .client
+            .lightning()?
+            .list_gateways()
+            .await
+            .into_iter()
+            .map(|g| g.info)
+            .collect();
+
+        Ok(gateways)
     }
 }
 
