@@ -6,7 +6,7 @@ use fedimint_client::{Client, ClientHandleArc, ClientModuleInstance, OperationId
 use fedimint_core::Amount;
 use fedimint_core::invite_code::InviteCode;
 use fedimint_ln_client::{LightningClientModule, LnReceiveState};
-use fedimint_ln_common::LightningGateway;
+use fedimint_ln_common::LightningGatewayAnnouncement;
 use fedimint_ln_common::lightning_invoice::{Bolt11Invoice, Description};
 use futures::StreamExt;
 use serde::Serialize;
@@ -79,9 +79,8 @@ impl FedimintWallet {
         let desc = Description::new(description)
             .map_err(|e| WalletError::Other(anyhow::anyhow!("Invalid description: {}", e)))?;
 
-        // Update gateway cache and find best gateway
-        self.client.lightning()?.update_gateway_cache().await?;
-        let gateways = self.client.lightning()?.list_gateways().await;
+        // Select the gateway with the longest TTL
+        let gateways = self.list_gateways().await?;
         let gateway = gateways
             .into_iter()
             .max_by_key(|g| g.ttl)
@@ -124,11 +123,18 @@ impl FedimintWallet {
             }
         }
 
+        // Select the gateway with the longest TTL
+        let gateways = self.list_gateways().await?;
+        let gateway = gateways
+            .into_iter()
+            .max_by_key(|g| g.ttl)
+            .context("No gateways found")?;
+
         info!("Paying invoice: {}", invoice);
         let payment = self
             .client
             .lightning()?
-            .pay_bolt11_invoice(None, invoice, ())
+            .pay_bolt11_invoice(Some(gateway.info), invoice, ())
             .await?;
 
         Ok(payment)
@@ -177,19 +183,12 @@ impl FedimintWallet {
     }
 
     /// List all available gateways in the federation
-    pub async fn list_gateways(&self) -> anyhow::Result<Vec<LightningGateway>> {
+    pub async fn list_gateways(&self) -> anyhow::Result<Vec<LightningGatewayAnnouncement>> {
         // Update gateway cache first
         self.client.lightning()?.update_gateway_cache().await?;
 
         // Get all gateways
-        let gateways: Vec<LightningGateway> = self
-            .client
-            .lightning()?
-            .list_gateways()
-            .await
-            .into_iter()
-            .map(|g| g.info)
-            .collect();
+        let gateways = self.client.lightning()?.list_gateways().await;
 
         Ok(gateways)
     }

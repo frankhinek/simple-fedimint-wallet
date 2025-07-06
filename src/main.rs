@@ -142,12 +142,16 @@ async fn main() -> Result<()> {
                         println!("\nFederation Gateways:");
                         println!("===================");
                         for gateway in gateways {
-                            println!("\nGateway ID: {}", gateway.gateway_id);
-                            println!("  Route hints: {} available", gateway.route_hints.len());
-                            println!("  Lightning alias: {}", gateway.lightning_alias);
-                            println!("  API endpoint: {}", gateway.api);
-                            println!("  Node public key: {}", gateway.node_pub_key);
-                            if gateway.supports_private_payments {
+                            println!("\nGateway ID: {}", gateway.info.gateway_id);
+                            println!("  TTL: {} seconds", gateway.ttl.as_secs());
+                            println!(
+                                "  Route hints: {} available",
+                                gateway.info.route_hints.len()
+                            );
+                            println!("  Lightning alias: {}", gateway.info.lightning_alias);
+                            println!("  API endpoint: {}", gateway.info.api);
+                            println!("  Node public key: {}", gateway.info.node_pub_key);
+                            if gateway.info.supports_private_payments {
                                 println!("  Supports private payments: Yes");
                             } else {
                                 println!("  Supports private payments: No");
